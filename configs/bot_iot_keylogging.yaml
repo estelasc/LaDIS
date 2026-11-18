@@ -1,0 +1,134 @@
+dataset:
+  name: Keylogging
+  source_database: Bot-IoT
+
+input:
+  numeric_inference_threshold: 1.0
+  sheet_name: 0
+
+audit:
+  quasi_constant_threshold: 0.995
+  high_cardinality_text_threshold: 0.90
+  almost_unique_threshold: 0.995
+  approximate_constant_atol: 1.0e-12
+  approximate_constant_rtol: 1.0e-9
+
+roles:
+  recoverable_constant_columns:
+    - label
+    - protocol
+    - ttl_min
+    - urg_cnt
+    - fwd_urg_cnt
+    - bwd_urg_cnt
+    - ece_cnt
+    - fwd_ece_cnt
+    - bwd_ece_cnt
+    - cwe_cnt
+    - fwd_cwe_cnt
+    - bwd_cwe_cnt
+
+  provenance_columns:
+    - pcap
+
+  expected_identifier_candidates:
+    - pcap
+    - flow_start
+    - flow_end
+    - src_ip
+    - dst_ip
+
+  identifier_columns_to_exclude:
+    - flow_start
+    - flow_end
+    - src_ip
+    - dst_ip
+
+  remove_approximate_constant_columns: true
+
+variable_types:
+  integer_tolerance: 1.0e-9
+
+  overrides: {}
+
+  numeric_categorical_columns:
+    - src_port
+    - dst_port
+
+categorical_analysis:
+  rare_category_threshold_pct: 0.1
+  minimum_rare_category_count: 10
+
+derived_features:
+  sum_rules:
+    total_bytes:
+      - fwd_bytes
+      - bwd_bytes
+
+    total_pkts:
+      - fwd_pkts
+      - bwd_pkts
+
+  rate_rules:
+    flow_bytes_s:
+      numerator: total_bytes
+      denominator: flow_duration
+      scale: 1.0
+
+    fwd_bytes_s:
+      numerator: fwd_bytes
+      denominator: flow_duration
+      scale: 1.0
+
+    bwd_bytes_s:
+      numerator: bwd_bytes
+      denominator: flow_duration
+      scale: 1.0
+
+    flow_pkts_s:
+      numerator: total_pkts
+      denominator: flow_duration
+      scale: 1.0
+
+    fwd_pkts_s:
+      numerator: fwd_pkts
+      denominator: flow_duration
+      scale: 1.0
+
+    bwd_pkts_s:
+      numerator: bwd_pkts
+      denominator: flow_duration
+      scale: 1.0
+
+  std_var_detection:
+    enabled: true
+    std_suffix: "_std"
+    var_suffix: "_var"
+    rtol: 1.0e-5
+    atol: 1.0e-8
+    minimum_match_pct: 99.9
+    minimum_valid_coverage_pct: 99.9
+
+split:
+  train_size: 0.80
+  validation_size: 0.10
+  test_size: 0.10
+  random_state: 42
+  keep_exact_duplicates_together: true
+  maximum_acceptable_deviation_pct: 0.5
+
+port_tokenization:
+  columns:
+    - dst_port
+    - src_port
+
+  top_k_ports: 50
+  minimum_exact_count: 20
+
+model_preprocessing:
+  skewness_log_threshold: 2.0
+
+storage:
+  parquet_compression: zstd
+  joblib_compression: 3
+  bundle_version: "1.0"
