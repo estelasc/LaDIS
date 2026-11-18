@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Package build metadata
+*.egg-info/
+build/
+dist/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+
+# Model checkpoints and serialized artifacts
+*.joblib
+*.pkl
+*.pt
+*.pth
+*.ckpt
+
+# Generated datasets
+*.parquet
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+
+# Operating systems
+.DS_Store
+Thumbs.db

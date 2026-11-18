@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "ladis"
+version = "0.1.0"
+description = "LaDIS: Latent Diffusion for Intrusion Synthesis"
+requires-python = ">=3.10"
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "torch",
+    "scikit-learn",
+    "sdmetrics",
+    "joblib",
+    "pyarrow",
+]
+
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
+
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ladis*"]
