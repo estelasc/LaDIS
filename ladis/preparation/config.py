@@ -12,7 +12,7 @@ other supported tabular sources.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -28,7 +28,7 @@ DEFAULT_PREPARATION_CONFIG: dict[str, Any] = {"dataset": {"name": None, "source_
     "categorical_analysis": {"rare_category_threshold_pct": 0.1, "minimum_rare_category_count": 10}, "derived_features": {"sum_rules": {},
     "rate_rules": {}, "std_var_detection": {"enabled": True, "std_suffix": "_std", "var_suffix": "_var", "rtol": 1e-5, "atol": 1e-8,
     "minimum_match_pct": 99.9, "minimum_valid_coverage_pct": 99.9}}, "split": {"train_size": 0.80, "validation_size": 0.10, "test_size": 0.10,
-    "random_state": 42, "keep_exact_duplicates_together": True, "maximum_acceptable_deviation_pct": 0.5}, "port_tokenization": {"columns": [],
+    "random_state": 42, "keep_exact_duplicates_together": True, "maximum_acceptable_deviation_pct": 0.5, "ensure_categorical_train_coverage": True}, "port_tokenization": {"columns": [],
     "top_k_ports": 50, "minimum_exact_count": 20}, "model_preprocessing": {"skewness_log_threshold": 2.0}, "storage": {"parquet_compression": "zstd",
     "joblib_compression": 3, "bundle_version": "1.0"}}
 
@@ -68,6 +68,15 @@ def _validate_preparation_config(config: Mapping[str, Any]) -> None:
     total_size = train_size + val_size + test_size
     if abs(total_size - 1.0) > 1e-12:
         raise ValueError("Train, validation, and test proportions must sum to 1.")
+    random_state = split_config["random_state"]
+    if isinstance(random_state, bool) or not isinstance(random_state, int):
+        raise TypeError("`random_state` must be an integer.")
+    keep_duplicates_together = split_config["keep_exact_duplicates_together"]
+    if not isinstance(keep_duplicates_together, bool):
+        raise TypeError("`keep_exact_duplicates_together` must be Boolean.")
+    max_deviation_pct = float(split_config["maximum_acceptable_deviation_pct"])
+    if not 0.0 <= max_deviation_pct <= 100.0:
+        raise ValueError("`maximum_acceptable_deviation_pct` must be between 0 and 100.")
     roles = config["roles"]
     recoverable = set(roles["recoverable_constant_columns"])
     provenance = set(roles["provenance_columns"])
@@ -77,10 +86,39 @@ def _validate_preparation_config(config: Mapping[str, Any]) -> None:
     invalid_overlaps = {name: sorted(columns) for name, columns in overlaps.items() if columns}
     if invalid_overlaps:
         raise ValueError(f"Dataset column roles must be mutually exclusive. Overlaps: {invalid_overlaps}")
-    if int(config["port_tokenization"]["top_k_ports"]) < 1:
+    port_config = config["port_tokenization"]
+    port_columns = port_config["columns"]
+    if isinstance(port_columns, str) or not isinstance(port_columns, Sequence):
+        raise TypeError("`port_tokenization.columns` must be a sequence of column names.")
+    if len(port_columns) != len(set(port_columns)):
+        raise ValueError("`port_tokenization.columns` contains repeated variables.")
+    if any(not isinstance(column, str) or not column for column in port_columns):
+        raise ValueError("Every configured port column must be a non-empty string.")
+    top_k_ports = port_config["top_k_ports"]
+    if isinstance(top_k_ports, bool) or not isinstance(top_k_ports, int):
+        raise TypeError("`top_k_ports` must be an integer.")
+    if top_k_ports < 1:
         raise ValueError("`top_k_ports` must be at least 1.")
-    if int(config["port_tokenization"]["minimum_exact_count"]) < 1:
+    minimum_exact_count = port_config["minimum_exact_count"]
+    if isinstance(minimum_exact_count, bool) or not isinstance(minimum_exact_count, int):
+        raise TypeError("`minimum_exact_count` must be an integer.")
+    if minimum_exact_count < 1:
         raise ValueError("`minimum_exact_count` must be at least 1.")
+    storage_config = config["storage"]
+    parquet_compression = storage_config["parquet_compression"]
+    if parquet_compression is not None and (not isinstance(parquet_compression, str) or not parquet_compression):
+        raise ValueError("`parquet_compression` must be a non-empty string or None.")
+    joblib_compression = storage_config["joblib_compression"]
+    if isinstance(joblib_compression, bool) or not isinstance(joblib_compression, int):
+        raise TypeError("`joblib_compression` must be an integer.")
+    if not 0 <= joblib_compression <= 9:
+        raise ValueError("`joblib_compression` must be between 0 and 9.")
+    bundle_version = storage_config["bundle_version"]
+    if not isinstance(bundle_version, str) or not bundle_version:
+        raise ValueError("`bundle_version` must be a non-empty string.")
+    ensure_cat_coverage = split_config["ensure_categorical_train_coverage"]
+    if not isinstance(ensure_cat_coverage, bool):
+        raise TypeError("`ensure_categorical_train_coverage` must be Boolean.")
 
 
 def load_preparation_config(path: str | Path) -> dict[str, Any]:

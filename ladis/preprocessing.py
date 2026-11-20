@@ -1,10 +1,15 @@
 """
 Preprocessing utilities for the LaDIS generative pipeline.
 
-This module provides reversible numerical and categorical transformations,
-network-port tokenization, count and mode dequantization, Gaussian quantile
-transformation, and the corresponding inverse operations required to recover
-the original model representation.
+This module converts prepared LaDIS partitions into the mixed numerical and
+categorical representations consumed by the generative model.
+
+It provides reversible numerical and categorical transformations, count and
+mode dequantization, Gaussian quantile transformation, and the corresponding
+inverse operations required to recover the prepared model representation.
+
+Dataset-level preparation, including network-port tokenization, is handled by
+``ladis.preparation`` before this module is applied.
 """
 
 from __future__ import annotations
@@ -92,7 +97,7 @@ def summarize_numerical_transform_candidates(df: pd.DataFrame, columns: Sequence
     return pd.DataFrame(summary_records)
 
 
-def fit_reversible_numerical_preprocessor(df_train: pd.DataFrame, *, cont_columns: Sequence[str], 
+def fit_reversible_numerical_preprocessor(df_train: pd.DataFrame, *, cont_columns: Sequence[str],
         disc_columns: Sequence[str], skewness_log_thr: float = 2.0) -> dict:
     """
     Fit reversible numerical transformations using training data only.
@@ -157,8 +162,8 @@ def fit_reversible_numerical_preprocessor(df_train: pd.DataFrame, *, cont_column
     nonneg_columns = [column for column in num_columns if training_min[column] >= 0]
     numerical_artifact = {"numerical_columns": num_columns, "continuous_columns": list(cont_columns), "discrete_columns": list(disc_columns),
         "log1p_columns": log1p_columns, "standard_only_columns": standard_only_columns, "nonnegative_columns": nonneg_columns,
-        "skewness_log_threshold": skewness_log_thr, "log1p_scaler": log1p_scaler, "standard_scaler": standard_scaler, 
-        "training_minimum": training_min, "training_maximum": training_max, 
+        "skewness_log_threshold": skewness_log_thr, "log1p_scaler": log1p_scaler, "standard_scaler": standard_scaler,
+        "training_minimum": training_min, "training_maximum": training_max,
         "original_dtypes": {column: str(df_train[column].dtype) for column in num_columns}, "transformation_summary": transformation_summary}
     return numerical_artifact
 
@@ -202,7 +207,7 @@ def transform_numerical_features(df: pd.DataFrame,num_artifact: dict) -> pd.Data
     return transformed
 
 
-def inverse_transform_numerical_features(transformed_df: pd.DataFrame, num_artifact: dict, *, 
+def inverse_transform_numerical_features(transformed_df: pd.DataFrame, num_artifact: dict, *,
         round_disc: bool = True, enforce_nonneg: bool = True) -> pd.DataFrame:
     """
     Reverse the fitted numerical transformations.
@@ -250,7 +255,7 @@ def inverse_transform_numerical_features(transformed_df: pd.DataFrame, num_artif
     return restored
 
 
-def fit_ordinal_categorical_encoder(df_train: pd.DataFrame, *, cat_columns: Sequence[str], 
+def fit_ordinal_categorical_encoder(df_train: pd.DataFrame, *, cat_columns: Sequence[str],
         predefined_cats: Mapping[str, Sequence[Any]] | None = None,) -> dict:
     """
     Fit an ordinal categorical encoder using training data only.
@@ -302,9 +307,9 @@ def fit_ordinal_categorical_encoder(df_train: pd.DataFrame, *, cat_columns: Sequ
             cat_source = "training_observations"
         cat_to_code = {category: code for code, category in enumerate(cats)}
         column_info[column] = {"categories": cats, "category_to_code": cat_to_code, "number_of_categories": len(cats),
-            "number_of_observed_training_categories": len(obs_cats), 
+            "number_of_observed_training_categories": len(obs_cats),
             "unobserved_predefined_categories": [category for category in cats if category not in obs_cats], "unknown_code": len(cats),
-            "category_source": cat_source, "most_frequent_category": _to_python_scalar(values.value_counts().index[0]), 
+            "category_source": cat_source, "most_frequent_category": _to_python_scalar(values.value_counts().index[0]),
             "original_dtype": str(values.dtype)}
     return {"categorical_columns": list(cat_columns), "column_information": column_info}
 
@@ -336,7 +341,7 @@ def transform_categorical_features(df: pd.DataFrame, cat_artifact: dict) -> tupl
         unknown_mask = mapped_values.isna()
         encoded_df[column] = (mapped_values.fillna(unknown_code).astype(np.int64))
         diagnostic_records.append({"column": column, "rows": len(df), "unknown_category_n": int(unknown_mask.sum()),
-            "unknown_category_pct": (100.0*unknown_mask.mean()), "unknown_code": unknown_code, 
+            "unknown_category_pct": (100.0*unknown_mask.mean()), "unknown_code": unknown_code,
             "defined_category_n": information["number_of_categories"],
             "observed_training_category_n": information["number_of_observed_training_categories"]})
     diagnostics = pd.DataFrame(diagnostic_records)
@@ -370,276 +375,44 @@ def inverse_transform_categorical_features(encoded_df: pd.DataFrame, cat_artifac
     return restored
 
 
-# Fixed semantic tokens available for every port variable
-PORT_BUCKET_TOKENS = ("missing", "zero", "well_known", "registered", "dynamic_private", "invalid")
-
-
-def _validate_port_columns(df: pd.DataFrame, port_columns: Sequence[str]) -> list[str]:
+def prepare_ladis_partition(*, df_prepared: pd.DataFrame, feature_order: Sequence[str], num_columns: Sequence[str], cat_columns: Sequence[str],
+    cat_cards: Mapping[str, int], num_artifact: Mapping[str, Any], cat_artifact: Mapping[str, Any], split_name: str) -> tuple[pd.DataFrame,
+    pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame], pd.Series]:
     """
-    Validate the requested port columns.
-    """
+    Construct one complete LaDIS model representation.
 
-    port_columns = list(port_columns)
-    missing_columns = [column for column in port_columns if column not in df.columns]
-    if missing_columns:
-        raise ValueError(f"The following port variables are absent from the DataFrame: {missing_columns}")
-    return port_columns
+    The input partition is assumed to have already passed through
+    ``ladis.preparation``. Network-port variables, when configured, therefore
+    already contain their training-fitted categorical tokens.
 
-
-def _port_bucket_token(port: int | float | pd.NA) -> str:
-    """
-    Assign a port value to a broad semantic range.
-
-    Port ranges
-    -----------
-    0
-        Zero or no-port value.
-    1-1023
-        Well-known or system ports.
-    1024-49151
-        Registered ports.
-    49152-65535
-        Dynamic, private, or ephemeral ports.
-    Values outside 0-65535
-        Invalid port values.
-    """
-
-    if pd.isna(port):
-        return "missing"
-    port = int(port)
-    if port == 0:
-        return "zero"
-    if 1 <= port <= 1023:
-        return "well_known"
-    if 1024 <= port <= 49151:
-        return "registered"
-    if 49152 <= port <= 65535:
-        return "dynamic_private"
-    return "invalid"
-
-
-def make_port_tokens(values: pd.Series, *, exact_ports: Sequence[int]) -> pd.Series:
-    """
-    Convert raw port numbers into categorical tokens.
-
-    Frequent train-selected ports receive tokens such as ``exact_80``.
-    All other ports are assigned to semantic range tokens.
-    """
-
-    num_ports = (pd.to_numeric(values, errors="coerce").round().astype("Int64"))
-    exact_port_set = {int(port) for port in exact_ports}
-    tokens: list[str] = []
-    for value in num_ports:
-        if pd.isna(value):
-            tokens.append("missing")
-            continue
-        int_port = int(value)
-        if int_port in exact_port_set:
-            tokens.append(f"exact_{int_port}")
-        else:
-            tokens.append(_port_bucket_token(int_port))
-    return pd.Series(tokens, index=values.index, dtype="string", name=values.name)
-
-
-def fit_port_tokenizer(df_train: pd.DataFrame, *, port_columns: Sequence[str], top_k_ports: int = 50, min_exact_count: int = 20) -> dict:
-    """
-    Fit port tokenisation using training data only.
-
-    The most frequent ports are retained exactly, subject to a minimum
-    observation count. Remaining ports are grouped by semantic range.
-
-    The empirical training-port distribution within each token is stored so
-    that generated tokens can later be converted into concrete port values.
-
-    Parameters
-    ----------
-    df_train: pandas.DataFrame
-        Original-scale training data.
-    port_columns: sequence of str
-        Port variables to tokenise.
-    top_k_ports: int, default=50
-        Maximum number of exact ports retained per variable.
-    min_exact_count: int, default=20
-        Minimum training frequency required for a port to be preserved exactly.
-
-    Returns
-    -------
-    dict
-        Fitted port-tokenisation artifact.
-    """
-
-    # Input validation
-    if not isinstance(df_train, pd.DataFrame):
-        raise TypeError("`df_train` must be a pandas DataFrame.")
-    if top_k_ports < 1:
-        raise ValueError("`top_k_ports` must be at least 1.")
-    if min_exact_count < 1:
-        raise ValueError("`minimum_exact_count` must be at least 1.")
-    # Validate the requested columns and preserve their supplied order
-    port_columns = _validate_port_columns(df_train, port_columns)
-    # Ensure that the same port variable was not provided more than once
-    if len(port_columns) != len(set(port_columns)):
-        raise ValueError("`port_columns` contains duplicated variable names.")
-    # Store fitted information independently for every port variable
-    column_info: dict[str, dict] = {}
-    # Store one compact summary row for every port variable
-    fit_summary_records: list[dict] = []
-    for column in port_columns:
-        # Convert the original values to nullable integer port numbers
-        ports = (pd.to_numeric(df_train[column], errors="coerce").round().astype("Int64"))
-        # Count the occurrence of every valid training port
-        port_counts = ports.value_counts(dropna=True)
-        # Retain only frequent ports that satisfy the minimum-count criterion
-        eligible_exact_ports = port_counts.loc[port_counts >= min_exact_count]
-        # Retain at most the `top_k_ports` most frequent eligible ports
-        exact_ports = (eligible_exact_ports.head(top_k_ports).index.astype(int).tolist())
-        exact_tokens = [f"exact_{port}" for port in exact_ports]
-        # Include the fixed range tokens even if one of them is absent from the training set
-        token_cats = (exact_tokens + list(PORT_BUCKET_TOKENS))
-        train_tokens = make_port_tokens(values=ports, exact_ports=exact_ports)
-        # Store the empirical distribution of concrete ports represented by each token
-        token_empirical_values: dict[str, dict] = {}
-        for token in token_cats:
-            token_mask = train_tokens == token
-            observed_ports = (ports.loc[token_mask].dropna().astype(int))
-            if observed_ports.empty:
-                token_empirical_values[token] = {"values": [], "probabilities": []}
-            else:
-                empirical_distribution = (observed_ports.value_counts(normalize=True))
-                token_empirical_values[token] = {"values": (empirical_distribution.index.astype(int).tolist()),
-                    "probabilities": (empirical_distribution.to_numpy(dtype=float).tolist())}     
-        # Overall training distribution used only as a defensive fallback if a generated token has no empirical values
-        overall_distribution = ports.dropna().astype(int).value_counts(normalize=True)
-        if overall_distribution.empty:
-            fallback_values = []
-            fallback_probabilities = []
-        else:
-            fallback_values = (overall_distribution.index.astype(int).tolist())
-            fallback_probabilities = (overall_distribution.to_numpy(dtype=float).tolist())
-        # Store all fitted information for the current port variable
-        column_info[column] = {"top_k_ports": top_k_ports, "minimum_exact_count": min_exact_count, "exact_ports": exact_ports, 
-            "token_categories": token_cats, "token_empirical_values": token_empirical_values, "fallback_values": fallback_values,
-            "fallback_probabilities": fallback_probabilities, "original_dtype": str(df_train[column].dtype)}
-        # Build a concise diagnostic summary for the current port variable
-        token_counts = train_tokens.value_counts(dropna=False)
-        exact_token_mask = train_tokens.str.startswith("exact_", na=False)
-        fit_summary_records.append({"column": column, "training_unique_ports": int(ports.nunique(dropna=True)),
-            "exact_ports_retained": len(exact_ports), "resulting_token_categories": len(token_cats), 
-            "observed_training_tokens": int(train_tokens.nunique()), "exact_token_observations_pct": (100.0*exact_token_mask.mean()),
-            "bucketed_training_observations_pct": (100.0*(~train_tokens.str.startswith("exact_")).mean()), "most_frequent_token": token_counts.index[0],
-            "most_frequent_token_pct": (100.0*token_counts.iloc[0] / len(train_tokens))})
-    if set(column_info) != set(port_columns):
-        missing_fitted_columns = sorted(set(port_columns).difference(column_info))
-        raise RuntimeError(f"Some requested port variables were not fitted: {missing_fitted_columns}")
-    return {"port_columns": port_columns, "column_information": column_info, "fit_summary": pd.DataFrame(fit_summary_records)}
-
-
-def transform_port_columns(df: pd.DataFrame, port_artifact: dict, *, split_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Apply train-fitted port tokenisation to a dataset.
-
-    Returns
-    -------
-    token_df: pandas.DataFrame
-        Tokenised port variables, retaining the original port column names.
-    diagnostics: pandas.DataFrame
-        Split-level tokenisation diagnostics.
-    """
-
-    port_columns = port_artifact["port_columns"]
-    _validate_port_columns(df, port_columns)
-    token_df = pd.DataFrame(index=df.index)
-    diagnostic_records: list[dict] = []
-    for column in port_columns:
-        info = port_artifact["column_information"][column]
-        tokens = make_port_tokens(df[column], exact_ports=info["exact_ports"])
-        known_token_mask = tokens.isin(info["token_categories"])
-        if not known_token_mask.all():
-            unknown_tokens = sorted(tokens.loc[~known_token_mask].unique().tolist())
-            raise RuntimeError(f"Unexpected port tokens were produced for '{column}': {unknown_tokens}")
-        token_df[column] = tokens
-        exact_mask = tokens.str.startswith("exact_")
-        diagnostic_records.append({"split": split_name, "column": column, "rows": len(tokens), "unique_raw_ports": int(df[column].nunique(dropna=True)),
-            "unique_tokens": int(tokens.nunique(dropna=True)), "exact_token_rows": int(exact_mask.sum()), "bucket_token_rows": int((~exact_mask).sum()),
-            "bucket_token_pct": (100.0*(~exact_mask).mean()), "unknown_token_rows": int((~known_token_mask).sum())})
-    return (token_df, pd.DataFrame(diagnostic_records))
-
-
-def inverse_transform_port_tokens(token_df: pd.DataFrame, port_artifact: dict, *, random_state: int = 42) -> pd.DataFrame:
-    """
-    Convert generated port tokens back into concrete port numbers.
-
-    Exact tokens are reconstructed deterministically. Bucket tokens are
-    converted by sampling from the empirical training-port distribution
-    associated with that token.
-    """
-
-    port_columns = port_artifact["port_columns"]
-    _validate_port_columns(token_df, port_columns)
-    random_generator = np.random.default_rng(random_state)
-    restored_ports = pd.DataFrame(index=token_df.index)
-    for column in port_columns:
-        info = port_artifact["column_information"][column]
-        rec_vals: list[int | pd.NA] = []
-        for token in token_df[column].astype("string"):
-            if pd.isna(token):
-                rec_vals.append(pd.NA)
-                continue
-            token = str(token)
-            if token.startswith("exact_"):
-                rec_vals.append(int(token.removeprefix("exact_")))
-                continue
-            empirical_info = info["token_empirical_values"].get(token, {"values": [], "probabilities": []})
-            candidate_vals = empirical_info["values"]
-            candidate_probs = empirical_info["probabilities"]
-            # A zero-frequency token should rarely be generated
-            if not candidate_vals:
-                candidate_vals = info["fallback_values"]
-                candidate_probs = info["fallback_probabilities"]
-            sampled_port = random_generator.choice(candidate_vals, p=candidate_probs)
-            rec_vals.append(int(sampled_port))
-        restored_ports[column] = pd.Series(rec_vals, index=token_df.index, dtype="Int64")
-    return restored_ports
-
-
-def prepare_ladis_partition(*, df_orig_scale: pd.DataFrame, feature_order: Sequence[str], num_columns: Sequence[str],
-    cat_columns: Sequence[str], cat_cards: Mapping[str, int], port_columns: Sequence[str], num_artifact: Mapping[str, Any],
-    cat_artifact: Mapping[str, Any], port_artifact: Mapping[str, Any], split_name: str) -> tuple[pd.DataFrame, pd.DataFrame,
-    pd.DataFrame, dict[str, pd.DataFrame], pd.Series]:
-    """
-    Construct one complete LaDIS partition representation.
-
-    The resulting objects serve two different purposes:
+    The resulting objects serve three purposes:
         1. Numerical model data contain the reversible numerical
-           transformations required by Gaussian diffusion.
-        2. Categorical model data contain zero-based integer codes required
-           by multinomial diffusion.
-        3. Evaluation data retain numerical variables in their original scale
-           and categorical variables as strings or port tokens.
+           transformations required by the mixed-type autoencoder.
+        2. Categorical model data contain zero-based integer codes used by the
+           categorical embeddings and decoder heads.
+        3. Evaluation data retain numerical variables in their original
+           prepared scale and categorical variables in their prepared semantic
+           representation.
 
     No preprocessing object is fitted in this function. All transformations
-    come from the training-fitted preparation artifact.
+    come from training-fitted preprocessing artifacts.
 
     Parameters
     ----------
-    df_orig_scale: pandas.DataFrame
-        Original-scale modelling partition.
+    df_prepared: pandas.DataFrame
+        Prepared modelling partition returned by ``ladis.preparation``.
     feature_order: sequence of str
         Definitive common modelling-feature order.
     num_columns: sequence of str
-        Numerical variables modelled through Gaussian diffusion.
+        Continuous and discrete-count variables represented numerically.
     cat_columns: sequence of str
-        Categorical variables modelled through multinomial diffusion.
+        Binary and categorical variables represented categorically.
     cat_cards: mapping
         Stored number of valid codes for each categorical variable.
-    port_columns: sequence of str
-        Raw source and destination port variables.
     num_artifact: mapping
         Training-fitted numerical preprocessing artifact.
     cat_artifact: mapping
         Training-fitted categorical encoding artifact.
-    port_artifact: mapping
-        Training-fitted port-tokenisation artifact.
     split_name: str
         Partition identifier used in diagnostics.
 
@@ -650,10 +423,10 @@ def prepare_ladis_partition(*, df_orig_scale: pd.DataFrame, feature_order: Seque
     cat_model_data: pandas.DataFrame
         Int64 zero-based categorical codes.
     eval_data: pandas.DataFrame
-        Original-scale numerical variables and tokenised categorical
-        variables, ordered according to `feature_order`.
+        Common evaluation representation in definitive feature order.
     diagnostics: dict
-        Port-tokenisation, categorical-encoding, and code-range diagnostics.
+        Numerical-transformation, categorical-encoding, and code-range
+        diagnostics.
     representation_summary: pandas.Series
         Compact structural and validity summary.
     """
@@ -661,47 +434,31 @@ def prepare_ladis_partition(*, df_orig_scale: pd.DataFrame, feature_order: Seque
     feature_order = list(feature_order)
     num_columns = list(num_columns)
     cat_columns = list(cat_columns)
-    port_columns = list(port_columns)
     cat_cards = {str(column): int(cardinality) for column, cardinality in cat_cards.items()}
-    if split_name not in {"train", "val", "test"}:
-        raise ValueError("`split_name` must be 'train', 'val', or 'test'.")
-    _validate_dataframe_columns(df_orig_scale, expected_columns=feature_order, df_name=f"{split_name} original-scale partition")
-    if len(df_orig_scale) == 0:
+    if split_name not in {"train", "validation", "test"}:
+        raise ValueError("`split_name` must be 'train', 'validation', or 'test'.")
+    _validate_dataframe_columns(df_prepared, expected_columns=feature_order, df_name=f"{split_name} prepared partition")
+    if len(df_prepared) == 0:
         raise ValueError(f"The {split_name} partition is empty.")
-    # Convert concrete ports into the tokens fitted on the training split
-    port_transform_result = transform_port_columns(df=df_orig_scale, port_artifact=port_artifact, split_name=split_name)
-    (tokenised_ports, port_diagnostics,) = _unpack_dataframe_result(port_transform_result, result_name="transform_port_columns")
-    tokenised_ports = (tokenised_ports.loc[:, port_columns].reset_index(drop=True))
-    _validate_dataframe_columns(tokenised_ports, expected_columns=port_columns, df_name=f"{split_name} tokenised ports")
-    if len(tokenised_ports) != len(df_orig_scale):
-        raise RuntimeError(f"The number of tokenised {split_name} ports differs from the number of original observations.")
-    # Table used only for common statistical evaluation
-    eval_data = (df_orig_scale.reset_index(drop=True).copy())
-    for column in port_columns:
-        eval_data[column] = (tokenised_ports[column].reset_index(drop=True).astype("string"))
-    eval_data = eval_data.loc[:, feature_order].copy()
-    # Port tokens must be stored as categorical strings in the common evaluation representation
-    invalid_port_dtypes = {column: str(eval_data[column].dtype) for column in port_columns 
-        if not (pd.api.types.is_string_dtype(eval_data[column].dtype) or pd.api.types.is_object_dtype(eval_data[column].dtype))}
-    if invalid_port_dtypes:
-        raise RuntimeError(f"The tokenised port variables do not use a categorical string dtype: {invalid_port_dtypes}")
-    # Apply the training-fitted numerical transformation
+    # Preserve the common prepared representation for statistical evaluation
+    eval_data = (df_prepared.reset_index(drop=True).loc[:, feature_order].copy())
+    # Apply the training-fitted reversible numerical transformation
     num_transform_result = transform_numerical_features(eval_data, num_artifact)
-    (num_model_data, num_diagnostics) = _unpack_dataframe_result(num_transform_result, result_name="transform_numerical_features")
+    num_model_data, num_diagnostics = _unpack_dataframe_result(num_transform_result, result_name="transform_numerical_features")
     num_model_data = (num_model_data.loc[:, num_columns].reset_index(drop=True).astype(np.float32))
     _validate_dataframe_columns(num_model_data, expected_columns=num_columns, df_name=f"{split_name} LaDIS numerical data")
-    num_vals = num_model_data.to_numpy(dtype=np.float32)
-    if np.isnan(num_vals).any():
-        affected_columns = num_model_data.columns[num_model_data.isna().any()].tolist()
+    num_values = num_model_data.to_numpy(dtype=np.float32)
+    if np.isnan(num_values).any():
+        affected_columns = (num_model_data.columns[num_model_data.isna().any()].tolist())
         raise RuntimeError(f"The transformed {split_name} numerical data contain missing values in: {affected_columns}")
-    if np.isinf(num_vals).any():
-        affected_columns = num_model_data.columns[np.isinf(num_model_data.to_numpy(dtype=np.float32)).any(axis=0)].tolist()
+    if np.isinf(num_values).any():
+        inf_mask = np.isinf(num_values)
+        affected_columns = [num_columns[column_index] for column_index in np.flatnonzero(inf_mask.any(axis=0))]
         raise RuntimeError(f"The transformed {split_name} numerical data contain infinite values in: {affected_columns}")
-    # Encode tokenised ports and the remaining categorical variables
+    # Encode binary and categorical variables using the training-fitted encoder
     cat_transform_result = transform_categorical_features(eval_data, cat_artifact)
-    (cat_model_data, cat_diagnostics) = _unpack_dataframe_result(cat_transform_result, result_name="transform_categorical_features")
-    cat_model_data = (cat_model_data.loc[:, cat_columns].reset_index(drop=True))
-    # Coerce to numerical values before enforcing the integer model dtype
+    cat_model_data, cat_diagnostics = _unpack_dataframe_result(cat_transform_result, result_name="transform_categorical_features")
+    cat_model_data = cat_model_data.loc[:, cat_columns].reset_index(drop=True)
     for column in cat_columns:
         cat_model_data[column] = pd.to_numeric(cat_model_data[column], errors="raise")
         values = cat_model_data[column].to_numpy(dtype=float)
@@ -709,7 +466,7 @@ def prepare_ladis_partition(*, df_orig_scale: pd.DataFrame, feature_order: Seque
             raise RuntimeError(f"The encoded categorical variable '{column}' contains non-integer codes.")
     cat_model_data = cat_model_data.astype(np.int64)
     _validate_dataframe_columns(cat_model_data, expected_columns=cat_columns, df_name=f"{split_name} LaDIS categorical data")
-    # Every code supplied to multinomial diffusion must be inside the zero-based interval defined by its stored cardinality
+    # Every categorical code supplied to the mixed-type model must lie inside the zero-based state space fitted from training observations
     code_range_records: list[dict[str, Any]] = []
     for column in cat_columns:
         if column not in cat_cards:
@@ -717,33 +474,30 @@ def prepare_ladis_partition(*, df_orig_scale: pd.DataFrame, feature_order: Seque
         cardinality = int(cat_cards[column])
         column_codes = cat_model_data[column].to_numpy(dtype=np.int64)
         invalid_mask = ((column_codes < 0) | (column_codes >= cardinality))
-        invalid_n = int(invalid_mask.sum())
-        if invalid_n:
+        invalid_count = int(invalid_mask.sum())
+        if invalid_count:
             invalid_examples = np.unique(column_codes[invalid_mask])[:10].tolist()
-            raise RuntimeError(f"The encoded {split_name} variable '{column}' contains "
-                f"{invalid_n} codes outside [0, {cardinality - 1}]. Examples: {invalid_examples}")
-        code_range_records.append({"split": split_name, "column": column, "cardinality": cardinality, 
-            "observed_code_min": int(column_codes.min()), "observed_code_max": int(column_codes.max()),
-            "observed_categories": int(np.unique(column_codes).size), "invalid_code_n": invalid_n})
+            raise RuntimeError(f"The encoded {split_name} variable '{column}' contains {invalid_count} codes outside [0, {cardinality - 1}]. "
+                f"Examples: {invalid_examples}")
+        code_range_records.append({"split": split_name, "column": column, "cardinality": cardinality, "observed_code_min": int(column_codes.min()),
+            "observed_code_max": int(column_codes.max()), "observed_categories": int(np.unique(column_codes).size), "invalid_code_n": invalid_count})
     code_range_diagnostics = pd.DataFrame(code_range_records)
-    # Validate the complete representation
     if not (len(num_model_data) == len(cat_model_data) == len(eval_data)):
         raise RuntimeError(f"The {split_name} numerical, categorical, and evaluation representations contain different row counts.")
-    model_feature_count = (num_model_data.shape[1] + cat_model_data.shape[1])
+    model_feature_count = num_model_data.shape[1] + cat_model_data.shape[1]
     if model_feature_count != len(feature_order):
         raise RuntimeError("The number of LaDIS numerical and categorical inputs does not equal the definitive model-feature count.")
     representation_summary = pd.Series({"split": split_name, "rows": len(eval_data), "numerical_variables": num_model_data.shape[1],
-        "categorical_variables": cat_model_data.shape[1], "raw_model_variables": model_feature_count,
-        "evaluation_variables": eval_data.shape[1], "numerical_dtype": str(num_model_data.dtypes.iloc[0]),
-        "categorical_dtype": str(cat_model_data.dtypes.iloc[0]), "numerical_missing_n": int(num_model_data.isna().sum().sum()),
-        "numerical_infinite_n": int(np.isinf(num_vals).sum()), "categorical_missing_n": int(cat_model_data.isna().sum().sum()),
-        "invalid_categorical_code_n": int(code_range_diagnostics["invalid_code_n"].sum()), "representation_valid": True}, name="value")
-    diagnostics = {"port_tokenization": port_diagnostics, "numerical_transformation": num_diagnostics,
-        "categorical_encoding": cat_diagnostics, "categorical_code_ranges": code_range_diagnostics}
+        "categorical_variables": cat_model_data.shape[1], "raw_model_variables": model_feature_count, "evaluation_variables": eval_data.shape[1],
+        "numerical_dtype": str(num_model_data.dtypes.iloc[0]), "categorical_dtype": str(cat_model_data.dtypes.iloc[0]),
+        "numerical_missing_n": int(num_model_data.isna().sum().sum()), "numerical_infinite_n": int(np.isinf(num_values).sum()),
+        "categorical_missing_n": int(cat_model_data.isna().sum().sum()), "invalid_categorical_code_n": int(code_range_diagnostics["invalid_code_n"].sum()),
+        "representation_valid": True}, name="value")
+    diagnostics = {"numerical_transformation": num_diagnostics, "categorical_encoding": cat_diagnostics, "categorical_code_ranges": code_range_diagnostics}
     return (num_model_data, cat_model_data, eval_data, diagnostics, representation_summary)
 
 
-def restrict_ladis_categories_to_training_support(*, cat_artifact: Mapping[str, Any], training_cat_data: pd.DataFrame, 
+def restrict_ladis_categories_to_training_support(*, cat_artifact: Mapping[str, Any], training_cat_data: pd.DataFrame,
     cat_columns: Sequence[str]) -> tuple[dict[str, Any], pd.DataFrame]:
     """
     Remove categorical states that were never observed in training.
@@ -762,7 +516,7 @@ def restrict_ladis_categories_to_training_support(*, cat_artifact: Mapping[str, 
     if (training_cat_data.columns.tolist() != cat_columns):
         raise RuntimeError("The training categorical table does not preserve the definitive LaDIS categorical order.")
     if training_cat_data.isna().any().any():
-        affected_columns = training_cat_data.columns[training_cat_data.isna().any()].tolist() 
+        affected_columns = training_cat_data.columns[training_cat_data.isna().any()].tolist()
         raise RuntimeError(f"The LaDIS categorical training representation contains missing values in: {affected_columns}")
     rest_artifact = deepcopy(cat_artifact)
     rest_artifact["categorical_columns"] = list(cat_columns)
@@ -808,7 +562,7 @@ def fit_ladis_count_dequantization(*, train_num_data: pd.DataFrame, disc_count_c
     fitting the Gaussian quantile transformer.
 
     Each observed count level receives a jitter interval based on the gaps to
-    its own neighbouring levels. 
+    its own neighbouring levels.
     Adjacent count-level intervals cannot overlap because ``gap_fraction`` is
     restricted to values below 0.5. Boundary levels are dequantized only
     toward the interior of the observed support.
@@ -886,7 +640,7 @@ def fit_ladis_count_dequantization(*, train_num_data: pd.DataFrame, disc_count_c
             "top_level_pct": float(100.0*value_counts[top_level_index] / len(values))})
     if not np.isfinite(output_data.to_numpy(dtype=np.float64)).all():
         raise RuntimeError("Count dequantization produced non-finite training values.")
-    artifact = {"method": "local_gap_uniform_tie_breaking_before_quantile", "random_state": int(random_state), 
+    artifact = {"method": "local_gap_uniform_tie_breaking_before_quantile", "random_state": int(random_state),
         "gap_fraction": float(gap_fraction), "columns": list(disc_count_columns), "column_information": column_info}
     diagnostics = pd.DataFrame(diagnostic_records)
     return output_data, artifact, diagnostics
@@ -942,8 +696,8 @@ def apply_ladis_count_dequantization(*, num_data: pd.DataFrame, dequantization_a
     return output_data
 
 
-def fit_ladis_mode_dequantization(*, train_num_data: pd.DataFrame, excluded_columns: Sequence[str], random_state: int, 
-    min_column_top_pct: float = 10.0, min_anchor_pct: float = 1.0, gap_fraction: float = 0.20, 
+def fit_ladis_mode_dequantization(*, train_num_data: pd.DataFrame, excluded_columns: Sequence[str], random_state: int,
+    min_column_top_pct: float = 10.0, min_anchor_pct: float = 1.0, gap_fraction: float = 0.20,
     boundary_jitter_width: float = 1e-3) -> tuple[pd.DataFrame, dict[str, Any], pd.DataFrame]:
     """
     Fit and apply reversible dequantization to dominant repeated numerical
@@ -1036,17 +790,17 @@ def fit_ladis_mode_dequantization(*, train_num_data: pd.DataFrame, excluded_colu
                     "jitter_low": float(jitter_low), "jitter_high": float(jitter_high), "interval_lower": float(anchor_val+ jitter_low),
                     "interval_upper": float(anchor_val + jitter_high)})
             dequantized_data[column] = updated_vals
-        column_info[column] = {"selected": sel_column, "top_value": top_val, "top_value_n": top_val_n, "top_value_pct": top_val_pct, 
+        column_info[column] = {"selected": sel_column, "top_value": top_val, "top_value_n": top_val_n, "top_value_pct": top_val_pct,
             "anchors": anchor_records}
         diagnostic_records.append({"column": column, "excluded_as_discrete_count": (column in excluded_column_set),
-            "selected_for_mode_dequantization": sel_column, "training_unique_n_before": int(len(unique_vals)), "top_value": top_val, 
-            "top_value_n": top_val_n, "top_value_pct": top_val_pct, "dequantized_anchor_n": len(anchor_records), 
+            "selected_for_mode_dequantization": sel_column, "training_unique_n_before": int(len(unique_vals)), "top_value": top_val,
+            "top_value_n": top_val_n, "top_value_pct": top_val_pct, "dequantized_anchor_n": len(anchor_records),
             "dequantized_value_n": (dequantized_val_n), "dequantized_value_pct": float(100.0*dequantized_val_n / n_rows),
             "training_unique_n_after": int(dequantized_data[column].nunique(dropna=True))})
     dequantized_vals = dequantized_data.to_numpy(dtype=np.float64)
     if not np.isfinite(dequantized_vals).all():
         raise RuntimeError("Mode dequantization produced non-finite training values.")
-    dequantization_artifact = {"numerical_columns": list(num_columns), "excluded_columns": sorted(excluded_column_set), 
+    dequantization_artifact = {"numerical_columns": list(num_columns), "excluded_columns": sorted(excluded_column_set),
         "random_state": int(random_state), "min_column_top_pct": float(min_column_top_pct), "min_anchor_pct": float(min_anchor_pct),
         "gap_fraction": float(gap_fraction), "boundary_jitter_width": float(boundary_jitter_width), "column_information": column_info}
     diagnostics = (pd.DataFrame(diagnostic_records).sort_values(["selected_for_mode_dequantization", "top_value_pct"],
@@ -1172,7 +926,7 @@ def fit_ladis_quantile_transformer(*, train_num_data: pd.DataFrame, random_state
     transf_train_data = pd.DataFrame(transf_vals, columns=num_columns)
     transf_means = transf_train_data.mean()
     transf_std_devs = transf_train_data.std()
-    transf_summary = pd.Series({"training_rows": len(transf_train_data), "numerical_variables": len(num_columns), 
+    transf_summary = pd.Series({"training_rows": len(transf_train_data), "numerical_variables": len(num_columns),
         "requested_quantiles": int(n_quantiles), "effective_quantiles": effective_n_quantiles, "output_distribution": "normal",
         "maximum_absolute_value": float(np.abs(transf_vals).max()), "maximum_absolute_column_mean": float(transf_means.abs().max()),
         "median_column_standard_deviation": float(transf_std_devs.median()), "missing_values": int(transf_train_data.isna().sum().sum()),
@@ -1238,7 +992,7 @@ def inverse_ladis_model_representation(*, num_model_data: pd.DataFrame, cat_mode
     _validate_dataframe_columns(cat_model_data, expected_columns=cat_columns, df_name="TabDDPM categorical model data")
     if len(num_model_data) != len(cat_model_data):
         raise ValueError("The numerical and categorical TabDDPM model tables contain different row counts.")
-    inv_num_result = inverse_transform_numerical_features(num_model_data, num_artifact, round_disc=round_disc, 
+    inv_num_result = inverse_transform_numerical_features(num_model_data, num_artifact, round_disc=round_disc,
         enforce_nonneg=enforce_nonneg)
     (restored_num_data, _) = _unpack_dataframe_result(inv_num_result, result_name="inverse_transform_numerical_features")
     restored_num_data = (restored_num_data.loc[:, num_columns].reset_index(drop=True))
@@ -1254,6 +1008,6 @@ def inverse_ladis_model_representation(*, num_model_data: pd.DataFrame, cat_mode
     if inf_mask.any():
         affected_columns = [num_columns[column_index] for column_index in np.flatnonzero(inf_mask.any(axis=0))]
         inf_counts = {column: int(inf_mask[:, num_columns.index(column)].sum()) for column in affected_columns}
-        raise RuntimeError("The inverse-transformed TabDDPM numerical data contain infinite values." 
+        raise RuntimeError("The inverse-transformed TabDDPM numerical data contain infinite values."
             f"Affected columns and counts: {inf_counts}")
     return restored_eval_data

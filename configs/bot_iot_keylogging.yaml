@@ -116,6 +116,7 @@ split:
   random_state: 42
   keep_exact_duplicates_together: true
   maximum_acceptable_deviation_pct: 0.5
+  ensure_categorical_train_coverage: true
 
 port_tokenization:
   columns:

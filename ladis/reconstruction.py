@@ -30,57 +30,51 @@ def reconstruct_derived_features(df: pd.DataFrame, *, derived_feature_artifact: 
     """
     Reconstruct deterministic variables using the stored validated rules.
 
-    The reconstruction order is read directly from the preparation artifact.
-    For this dataset, it is:
-        1. sum rules
-        2. rate rules
-        3. variance rules
-
-    Parameters
-    ----------
-    df: pandas.DataFrame
-        Synthetic observations after basic numerical postprocessing.
-    derived_feature_artifact: mapping
-        Stored deterministic-feature reconstruction information.
-
-    Returns
-    -------
-    pandas.DataFrame
-        DataFrame containing the reconstructed deterministic variables.
+    Variables are reconstructed following the topological order determined
+    during dataset preparation.
     """
 
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("`df` must be a pandas DataFrame.")
+    required_fields = {"reconstruction_rules", "reconstruction_order"}
+    missing_fields = required_fields.difference(derived_feature_artifact)
+    if missing_fields:
+        raise ValueError(f"Derived-feature artifacts are missing required fields: {sorted(missing_fields)}")
     rec_df = df.copy()
-    rec_order = list(derived_feature_artifact["reconstruction_order"])
-    for rule_group_name in rec_order:
-        rule_group = derived_feature_artifact[rule_group_name]
-        for target_column, rule in rule_group.items():
-            operation = rule["operation"]
-            # Sum relationships
-            if operation == "sum":
-                source_columns = list(rule["source_columns"])
-                _require_columns(rec_df, source_columns, dataframe_name="Synthetic data before sum reconstruction")
-                rec_df[target_column] = rec_df[source_columns].sum(axis=1)
-            # Ratio/rate relationships
-            elif operation == "ratio":
-                numerator_column = rule["numerator"]
-                denominator_column = rule["denominator"]
-                scale = float(rule.get("scale", 1.0))
-                _require_columns(rec_df, [numerator_column, denominator_column], dataframe_name="Synthetic data before rate reconstruction")
-                denominator_vals = pd.to_numeric(rec_df[denominator_column], errors="coerce").to_numpy(dtype=float)
-                if (~np.isfinite(denominator_vals)).any():
-                    raise ValueError(f"Rate denominator '{denominator_column}' contains non-finite values.")
-                if (denominator_vals <= 0).any():
-                    raise ValueError(f"Rate denominator '{denominator_column}' must be strictly positive before rate reconstruction.")
-                numerator_vals = pd.to_numeric(rec_df[numerator_column], errors="coerce").to_numpy(dtype=float)
-                rec_df[target_column] = scale*numerator_vals / denominator_vals
-            # Variance relationships
-            elif operation == "square": 
-                source_column = rule["source_column"]
-                _require_columns(rec_df, [source_column], dataframe_name="Synthetic data before variance reconstruction")
-                source_vals = pd.to_numeric(rec_df[source_column], errors="coerce").to_numpy(dtype=float)
-                rec_df[target_column] = np.square(source_vals)
-            else:
-                raise ValueError(f"Unsupported deterministic-feature operation: '{operation}'")
+    reconstruction_rules = dict(derived_feature_artifact["reconstruction_rules"])
+    reconstruction_order = list(derived_feature_artifact["reconstruction_order"])
+    missing_rules = [target for target in reconstruction_order if target not in reconstruction_rules]
+    if missing_rules:
+        raise RuntimeError(f"Reconstruction order contains targets without stored rules: {missing_rules}")
+    for target_column in reconstruction_order:
+        rule = reconstruction_rules[target_column]
+        operation = rule["operation"]
+        # Sum relationships
+        if operation == "sum":
+            source_columns = list(rule["source_columns"])
+            _require_columns(rec_df, source_columns, dataframe_name="Synthetic data before sum reconstruction")
+            rec_df[target_column] = rec_df[source_columns].sum(axis=1)
+        # Ratio/rate relationships
+        elif operation == "ratio":
+            numerator_column = rule["numerator"]
+            denominator_column = rule["denominator"]
+            scale = float(rule.get("scale", 1.0))
+            _require_columns(rec_df, [numerator_column, denominator_column], dataframe_name="Synthetic data before rate reconstruction")
+            denominator_vals = pd.to_numeric(rec_df[denominator_column], errors="coerce").to_numpy(dtype=float)
+            if (~np.isfinite(denominator_vals)).any():
+                raise ValueError(f"Rate denominator '{denominator_column}' contains non-finite values.")
+            if (denominator_vals <= 0).any():
+                raise ValueError(f"Rate denominator '{denominator_column}' must be strictly positive before rate reconstruction.")
+            numerator_vals = pd.to_numeric(rec_df[numerator_column], errors="coerce").to_numpy(dtype=float)
+            rec_df[target_column] = scale * numerator_vals / denominator_vals
+        # Variance relationships
+        elif operation == "square":
+            source_column = rule["source_column"]
+            _require_columns(rec_df, [source_column], dataframe_name=("Synthetic data before variance reconstruction"))
+            source_vals = pd.to_numeric(rec_df[source_column], errors="coerce").to_numpy(dtype=float)
+            rec_df[target_column] = np.square(source_vals)
+        else:
+            raise ValueError(f"Unsupported deterministic-feature operation: '{operation}'")
     return rec_df
 
 
@@ -348,26 +342,25 @@ def validate_reconstructed_synthetic_data(rec_df: pd.DataFrame, *, expected_colu
         raise ValueError("`binary_allowed_vals` was supplied while `val_binary_columns=False`.")
     # Deterministic-feature validation
     derived_records = []
-    for (target_column, rule) in derived_feature_artifact["sum_rules"].items():
-        expected_vals = (rec_df[rule["source_columns"]].sum(axis=1).to_numpy(dtype=float))
+    reconstruction_rules = dict(derived_feature_artifact["reconstruction_rules"])
+    reconstruction_order = list(derived_feature_artifact["reconstruction_order"])
+    for target_column in reconstruction_order:
+        rule = reconstruction_rules[target_column]
+        operation = rule["operation"]
+        if operation == "sum":
+            expected_vals = rec_df[rule["source_columns"]].sum(axis=1).to_numpy(dtype=float)
+        elif operation == "ratio":
+            numerator_vals = rec_df[rule["numerator"]].to_numpy(dtype=float)
+            denominator_vals = rec_df[rule["denominator"]].to_numpy(dtype=float)
+            expected_vals = float(rule.get("scale", 1.0)) * numerator_vals / denominator_vals
+        elif operation == "square":
+            expected_vals = np.square(rec_df[rule["source_column"]].to_numpy(dtype=float))
+        else:
+            raise ValueError(f"Unsupported deterministic-feature operation: '{operation}'")
         observed_vals = rec_df[target_column].to_numpy(dtype=float)
         differences = np.abs(observed_vals - expected_vals)
-        derived_records.append({"column": target_column, "relationship": "sum",
-            "successful": bool(np.allclose(observed_vals, expected_vals, atol=atol, rtol=rtol)), "maximum_absolute_error": float(differences.max())})
-    for (target_column, rule) in derived_feature_artifact["rate_rules"].items():
-        numerator_vals = rec_df[rule["numerator"]].to_numpy(dtype=float)
-        denominator_vals = rec_df[rule["denominator"]].to_numpy(dtype=float)
-        expected_vals = float(rule.get("scale", 1.0))*numerator_vals / denominator_vals
-        observed_vals = rec_df[target_column].to_numpy(dtype=float)
-        differences = np.abs(observed_vals - expected_vals)
-        derived_records.append({"column": target_column, "relationship": "ratio",
-            "successful": bool(np.allclose(observed_vals, expected_vals, atol=atol, rtol=rtol)), "maximum_absolute_error": float(differences.max())})
-    for (target_column, rule) in derived_feature_artifact["variance_rules"].items():
-        expected_vals = np.square(rec_df[rule["source_column"]].to_numpy(dtype=float))
-        observed_vals = rec_df[target_column].to_numpy(dtype=float)
-        differences = np.abs(observed_vals - expected_vals)
-        derived_records.append({"column": target_column, "relationship": "square",
-            "successful": bool(np.allclose(observed_vals, expected_vals, atol=atol, rtol=rtol)), "maximum_absolute_error": float(differences.max())})
+        derived_records.append({"column": target_column, "relationship": operation, "successful": bool(np.allclose(observed_vals, expected_vals, atol=atol,
+            rtol=rtol)), "maximum_absolute_error": float(differences.max())})
     derived_val = pd.DataFrame(derived_records)
     all_derived_relationships_valid = bool(derived_val["successful"].all())
     all_dtypes_match = bool(dtype_val["dtype_matches"].all())

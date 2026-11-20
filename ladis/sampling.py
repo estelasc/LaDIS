@@ -68,6 +68,9 @@ def decode_ladis_latent_partition(*, model: MixedTypeAutoencoder, raw_latent_dat
     Decode raw autoencoder latents into numerical values and categorical codes.
     """
 
+    batch_size = int(batch_size)
+    if batch_size <= 0:
+        raise ValueError("`batch_size` must be positive.")
     latent_columns = [f"z_{dimension:02d}" for dimension in range(model.latent_dim)]
     latent_vals = _validate_ladis_latent_dataframe(latent_data=raw_latent_data, expected_columns=latent_columns, 
         data_name="latent decoder input").astype(np.float32)

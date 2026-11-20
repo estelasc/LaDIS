@@ -24,9 +24,16 @@ from .preprocessing import inverse_transform_numerical_features, inverse_transfo
 
 
 # Synthetic-data evaluation
+_SDMETRICS_TABLE_NAME = "data"
+
+
 def build_sdmetrics_metadata(*, feature_order: Sequence[str], cat_columns: Sequence[str]) -> dict:
     """
-    Build SDMetrics single-table metadata for the model representation.
+    Build unified SDMetrics metadata for the single LaDIS evaluation table.
+
+    SDMetrics uses a unified report interface in current releases. LaDIS still
+    evaluates one table at a time, so the model representation is wrapped in a
+    one-table metadata dictionary without changing any column semantics.
 
     Parameters
     ----------
@@ -38,12 +45,27 @@ def build_sdmetrics_metadata(*, feature_order: Sequence[str], cat_columns: Seque
     Returns
     -------
     dict
-        SDMetrics-compatible metadata dictionary.
+        Unified SDMetrics-compatible metadata dictionary.
     """
 
     feature_order = list(feature_order)
-    cat_columns = set(cat_columns)
-    return {"columns": {column: {"sdtype": ("categorical" if column in cat_columns else "numerical")} for column in feature_order}}
+    cat_column_set = set(cat_columns)
+    unknown_cat_columns = sorted(cat_column_set.difference(feature_order))
+    if unknown_cat_columns:
+        raise ValueError(
+            "Categorical variables are absent from the evaluation schema: "
+            f"{unknown_cat_columns}"
+        )
+
+    columns = {
+        column: {
+            "sdtype": (
+                "categorical" if column in cat_column_set else "numerical"
+            )
+        }
+        for column in feature_order
+    }
+    return {"tables": {_SDMETRICS_TABLE_NAME: {"columns": columns}}}
 
 
 def evaluate_sample(*, real_val_data: pd.DataFrame, synth_data: pd.DataFrame, fitted_training_data: pd.DataFrame,
@@ -71,17 +93,25 @@ def evaluate_sample(*, real_val_data: pd.DataFrame, synth_data: pd.DataFrame, fi
 
     expected_columns = (real_val_data.columns.tolist())
     if synth_data.columns.tolist() != expected_columns:
-        raise ValueError("The synthetic CTGAN schema differs from the validation schema.")
+        raise ValueError("The synthetic LaDIS schema differs from the validation schema.")
     if len(synth_data) != len(real_val_data):
-        raise ValueError("CTGAN evaluation requires equal-sized real and synthetic validation datasets.")
+        raise ValueError("LaDIS evaluation requires equal-sized real and synthetic validation datasets.")
     cat_columns = list(cat_columns)
     num_columns = [column for column in expected_columns if column not in cat_columns]
-    # SDMetrics statistical-fidelity evaluation
+    # SDMetrics statistical-fidelity evaluation. The unified report receives a
+    # one-table dataset because LaDIS evaluates one attack table at a time.
     quality_report = QualityReport()
-    quality_report.generate(real_data=real_val_data, synthetic_data=synth_data, metadata=metadata, verbose=False)
+    quality_report.generate(
+        real_data={_SDMETRICS_TABLE_NAME: real_val_data},
+        synthetic_data={_SDMETRICS_TABLE_NAME: synth_data},
+        metadata=metadata,
+        verbose=False,
+    )
     overall_quality_score = float(quality_report.get_score())
-    property_scores = (quality_report.get_properties().copy())
-    property_score_lookup = (property_scores.set_index("Property")["Score"].to_dict())
+    property_scores = quality_report.get_properties().copy()
+    property_score_lookup = (
+        property_scores.set_index("Property")["Score"].to_dict()
+    )
     # Structural validity
     missing_n = int(synth_data.isna().sum().sum())
     synth_num_vals = (synth_data[num_columns].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float))

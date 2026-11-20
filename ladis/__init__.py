@@ -2,4 +2,6 @@
 LaDIS: Latent Diffusion for Intrusion Synthesis.
 """
 
-__version__ = "0.1.0"
+from .pipeline import LaDIS, PAPER_LADIS_CONFIG, build_ladis_smoke_test_config
+
+__all__ = ["LaDIS", "PAPER_LADIS_CONFIG", "build_ladis_smoke_test_config"]

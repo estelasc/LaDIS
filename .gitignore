@@ -46,3 +46,6 @@ Thumbs.db
 
 # Local datasets
 data/
+
+# Smoke test
+tests/test_keylogging_end_to_end.py
