@@ -980,7 +980,7 @@ def inverse_ladis_model_representation(*, num_model_data: pd.DataFrame, cat_mode
     Numerical variables are inverse-transformed to their original scale.
     Categorical integer codes are decoded into protocol labels and port
     tokens. Concrete ports are deliberately not restored here because model
-    selection must use the same tokenised representation as CTGAN and TVAE.
+    selection operates on the common tokenised representation.
 
     This function will also be reused after candidate sampling.
     """
@@ -988,10 +988,10 @@ def inverse_ladis_model_representation(*, num_model_data: pd.DataFrame, cat_mode
     num_columns = list(num_columns)
     cat_columns = list(cat_columns)
     feature_order = list(feature_order)
-    _validate_dataframe_columns(num_model_data, expected_columns=num_columns, df_name="TabDDPM numerical model data")
-    _validate_dataframe_columns(cat_model_data, expected_columns=cat_columns, df_name="TabDDPM categorical model data")
+    _validate_dataframe_columns(num_model_data, expected_columns=num_columns, df_name="LaDIS numerical model data")
+    _validate_dataframe_columns(cat_model_data, expected_columns=cat_columns, df_name="LaDIS categorical model data")
     if len(num_model_data) != len(cat_model_data):
-        raise ValueError("The numerical and categorical TabDDPM model tables contain different row counts.")
+        raise ValueError("The numerical and categorical LaDIS model tables contain different row counts.")
     inv_num_result = inverse_transform_numerical_features(num_model_data, num_artifact, round_disc=round_disc,
         enforce_nonneg=enforce_nonneg)
     (restored_num_data, _) = _unpack_dataframe_result(inv_num_result, result_name="inverse_transform_numerical_features")
@@ -1003,11 +1003,11 @@ def inverse_ladis_model_representation(*, num_model_data: pd.DataFrame, cat_mode
     restored_eval_data = restored_eval_data.loc[:, feature_order]
     num_vals = restored_eval_data[num_columns].to_numpy(dtype=float)
     if np.isnan(num_vals).any():
-        raise RuntimeError("The inverse-transformed TabDDPM numerical data contain missing values.")
+        raise RuntimeError("The inverse-transformed LaDIS numerical data contain missing values.")
     inf_mask = np.isinf(num_vals)
     if inf_mask.any():
         affected_columns = [num_columns[column_index] for column_index in np.flatnonzero(inf_mask.any(axis=0))]
         inf_counts = {column: int(inf_mask[:, num_columns.index(column)].sum()) for column in affected_columns}
-        raise RuntimeError("The inverse-transformed TabDDPM numerical data contain infinite values."
+        raise RuntimeError("The inverse-transformed LaDIS numerical data contain infinite values."
             f"Affected columns and counts: {inf_counts}")
     return restored_eval_data
