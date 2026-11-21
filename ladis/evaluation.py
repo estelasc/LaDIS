@@ -52,24 +52,13 @@ def build_sdmetrics_metadata(*, feature_order: Sequence[str], cat_columns: Seque
     cat_column_set = set(cat_columns)
     unknown_cat_columns = sorted(cat_column_set.difference(feature_order))
     if unknown_cat_columns:
-        raise ValueError(
-            "Categorical variables are absent from the evaluation schema: "
-            f"{unknown_cat_columns}"
-        )
-
-    columns = {
-        column: {
-            "sdtype": (
-                "categorical" if column in cat_column_set else "numerical"
-            )
-        }
-        for column in feature_order
-    }
+        raise ValueError(f"Categorical variables are absent from the evaluation schema: {unknown_cat_columns}")
+    columns = {column: {"sdtype": ("categorical" if column in cat_column_set else "numerical")} for column in feature_order}
     return {"tables": {_SDMETRICS_TABLE_NAME: {"columns": columns}}}
 
 
-def evaluate_sample(*, real_val_data: pd.DataFrame, synth_data: pd.DataFrame, fitted_training_data: pd.DataFrame,
-    metadata: dict, cat_columns: Sequence[str], candidate_name: str) -> tuple[pd.Series, pd.DataFrame, QualityReport]:
+def evaluate_sample(*, real_val_data: pd.DataFrame, synth_data: pd.DataFrame, fitted_training_data: pd.DataFrame, metadata: dict, cat_columns: Sequence[str],
+    candidate_name: str) -> tuple[pd.Series, pd.DataFrame, QualityReport]:
     """
     Evaluate a sample against held-out validation data.
 
@@ -98,20 +87,13 @@ def evaluate_sample(*, real_val_data: pd.DataFrame, synth_data: pd.DataFrame, fi
         raise ValueError("LaDIS evaluation requires equal-sized real and synthetic validation datasets.")
     cat_columns = list(cat_columns)
     num_columns = [column for column in expected_columns if column not in cat_columns]
-    # SDMetrics statistical-fidelity evaluation. The unified report receives a
-    # one-table dataset because LaDIS evaluates one attack table at a time.
+    # SDMetrics statistical-fidelity evaluation. The unified report receives a one-table dataset
     quality_report = QualityReport()
-    quality_report.generate(
-        real_data={_SDMETRICS_TABLE_NAME: real_val_data},
-        synthetic_data={_SDMETRICS_TABLE_NAME: synth_data},
-        metadata=metadata,
-        verbose=False,
-    )
+    quality_report.generate(real_data={_SDMETRICS_TABLE_NAME: real_val_data}, synthetic_data={_SDMETRICS_TABLE_NAME: synth_data}, metadata=metadata,
+        verbose=False)
     overall_quality_score = float(quality_report.get_score())
     property_scores = quality_report.get_properties().copy()
-    property_score_lookup = (
-        property_scores.set_index("Property")["Score"].to_dict()
-    )
+    property_score_lookup = (property_scores.set_index("Property")["Score"].to_dict())
     # Structural validity
     missing_n = int(synth_data.isna().sum().sum())
     synth_num_vals = (synth_data[num_columns].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float))

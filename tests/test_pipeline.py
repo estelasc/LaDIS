@@ -13,9 +13,9 @@ import pandas as pd
 import torch
 
 from ladis.models import derive_ladis_embedding_dimensions
-from ladis.preprocessing import (fit_ordinal_categorical_encoder, fit_port_tokenizer, fit_reversible_numerical_preprocessor, 
-    inverse_transform_categorical_features, inverse_transform_numerical_features, inverse_transform_port_tokens, transform_categorical_features,
-    transform_numerical_features, transform_port_columns)
+from ladis.preparation import fit_port_tokenizer, inverse_transform_port_tokens, transform_port_columns
+from ladis.preprocessing import (fit_ordinal_categorical_encoder, fit_reversible_numerical_preprocessor, inverse_transform_categorical_features,
+    inverse_transform_numerical_features, transform_categorical_features, transform_numerical_features)
 from ladis.training import fit_ladis_autoencoder, fit_ladis_clean_z0_diffusion
 from ladis.latent import (encode_ladis_partition, fit_ladis_latent_standardization, freeze_ladis_autoencoder, inverse_ladis_latent_standardization,
     transform_ladis_latent_space)
@@ -39,7 +39,7 @@ def _make_model_ready_data(n_rows: int, *, seed: int) -> tuple[pd.DataFrame, pd.
     return num_data, cat_data
 
 
-def test_preprocessing_roundtrip_smoke() -> None:
+def test_preparation_and_preprocessing_roundtrip_smoke() -> None:
     raw_data = _make_raw_preprocessing_data()
     num_artifact = fit_reversible_numerical_preprocessor(raw_data, cont_columns=["duration"], disc_columns=["packet_count"])
     transformed_num = transform_numerical_features(raw_data, num_artifact)
@@ -54,15 +54,23 @@ def test_preprocessing_roundtrip_smoke() -> None:
     assert encoded_cat.columns.tolist() == ["protocol"]
     assert int(cat_diagnostics["unknown_category_n"].sum()) == 0
     assert np.array_equal(restored_cat["protocol"].astype(str).to_numpy(), raw_data["protocol"].astype(str).to_numpy())
-    port_artifact = fit_port_tokenizer(raw_data, port_columns=["src_port", "dst_port"], top_k_ports=4, min_exact_count=2)
-    tokenized_ports, port_diagnostics = transform_port_columns(raw_data, port_artifact, split_name="train")
-    restored_ports = inverse_transform_port_tokens(tokenized_ports, port_artifact, random_state=RANDOM_STATE)
-    assert tokenized_ports.columns.tolist() == ["src_port", "dst_port"]
-    assert int(port_diagnostics["unknown_token_rows"].sum()) == 0
-    assert restored_ports.shape == tokenized_ports.shape
-    restored_port_values = restored_ports.astype("int64").to_numpy()
-    assert np.all(restored_port_values >= 0)
-    assert np.all(restored_port_values <= 65535)
+    port_report, port_artifact = fit_port_tokenizer(raw_data, port_columns=["src_port", "dst_port"], top_k_ports=4, min_exact_count=2)
+    tokenized_data = transform_port_columns(raw_data, port_artifact)
+    restored_data = inverse_transform_port_tokens(tokenized_data, port_artifact, random_state=RANDOM_STATE)
+    assert port_report["column"].tolist() == ["src_port", "dst_port"]
+    assert tokenized_data.columns.tolist() == raw_data.columns.tolist()
+    assert restored_data.columns.tolist() == raw_data.columns.tolist()
+    assert tokenized_data.shape == raw_data.shape
+    assert restored_data.shape == raw_data.shape
+    for column in ["src_port", "dst_port"]:
+        allowed_tokens = set(port_artifact["column_artifacts"][column]["token_categories"])
+        observed_tokens = set(tokenized_data[column].astype("string").dropna().tolist())
+        assert observed_tokens.issubset(allowed_tokens)
+        restored_values = pd.to_numeric(restored_data[column], errors="raise").to_numpy(dtype=int)
+        assert np.all(restored_values >= 0)
+        assert np.all(restored_values <= 65535)
+    # Port processing must not alter unrelated variables
+    pd.testing.assert_frame_equal(tokenized_data[["duration", "packet_count", "protocol"]], raw_data[["duration", "packet_count", "protocol"]])
 
 
 def test_core_ladis_pipeline_smoke() -> None:

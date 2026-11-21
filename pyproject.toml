@@ -24,6 +24,11 @@ dependencies = [
 
 
 [project.optional-dependencies]
+pcap = [
+    "scapy>=2.8,<2.9",
+    "tqdm>=4.70,<5",
+]
+
 dev = [
     "pytest>=8",
 ]
