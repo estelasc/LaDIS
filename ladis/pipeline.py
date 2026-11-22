@@ -36,7 +36,7 @@ from .training import fit_ladis_autoencoder
 
 PAPER_LADIS_CONFIG: dict[str, Any] = {"latent_dimension_candidates": (4, 8, 12, 16, 20, 24, 28, 32), "embedding_min_dimension": 2, "embedding_max_dimension": 16,
     "preprocessing": {"count_gap_fraction": 0.10, "mode_min_column_top_pct": 10.0, "mode_min_anchor_pct": 1.0, "mode_gap_fraction": 0.20,
-    "mode_boundary_jitter_width": 1e-3, "quantile_count": 1_000}, "autoencoder": { "encoder_hidden_dimensions": (256, 128, 64),
+    "mode_boundary_jitter_width": 1e-3, "quantile_count": 1_000}, "autoencoder": {"encoder_hidden_dimensions": (256, 128, 64),
     "decoder_hidden_dimensions": (64, 128, 256), "dropout": 0.0, "learning_rate": 1e-3, "weight_decay": 1e-5, "batch_size": 4_096, "maximum_epochs": 100,
     "early_stopping_patience": 10, "minimum_improvement": 1e-4, "gradient_clip_norm": 1.0, "numerical_loss_weight": 1.0, "variance_loss_weight": 0.0,
     "variance_loss_epsilon": 1e-6, "marginal_loss_weight": 0.0, "categorical_loss_weight": 1.0, "normalize_categorical_loss": True},
