@@ -1588,18 +1588,33 @@ python -m compileall -q ladis tests
 
 ## Citation
 
-LaDIS is associated with the manuscript:
+If you use LaDIS in academic work, please cite the associated manuscript:
 
-**Latent Diffusion for Internet of Things Attack Data Generation in Intrusion Detection**
+> E. Sánchez-Carballo, F. M. Melgarejo-Meseguer, and J. L. Rojo-Álvarez,
+> "Latent Diffusion for Internet of Things Attack Data Generation in Intrusion Detection,"
+> *arXiv preprint arXiv:2601.16976*, 2026.
 
-Estela Sánchez-Carballo, Francisco M. Melgarejo-Meseguer, and José Luis Rojo-Álvarez.
+```bibtex
+@misc{sanchezcarballo2026latent,
+  title = {Latent Diffusion for Internet of Things Attack Data Generation in Intrusion Detection},
+  author = {Sánchez-Carballo, Estela and Melgarejo-Meseguer, Francisco M. and Rojo-Álvarez, José Luis},
+  year = {2026},
+  eprint = {2601.16976},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG}
+}
+```
 
-If you use LaDIS in academic work, please cite the associated publication. Final bibliographic metadata and a BibTeX entry should be added here when the definitive publication record is available.
+A peer-reviewed journal version is currently under consideration. Once the final journal article is published, please cite the journal version in preference to the arXiv preprint.
 
 ---
 
 ## License
 
-A repository license has not yet been specified.
+LaDIS is licensed under the [Apache License 2.0](LICENSE).
 
-Before public redistribution or release, add a `LICENSE` file and update this section with the corresponding terms.
+Copyright 2026 Estela Sánchez-Carballo.
+
+This license applies to the LaDIS source code and repository documentation distributed under these terms. Third-party datasets, external resources, and software dependencies remain subject to their respective licenses and terms of use.
+
+The optional PCAP feature-extraction utilities do not grant any rights to the underlying Bot-IoT, CICIoT2023, or other external datasets. Users are responsible for obtaining and using those datasets in accordance with the terms established by their respective providers.
