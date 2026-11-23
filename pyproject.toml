@@ -1,13 +1,52 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 
 [project]
 name = "ladis"
 version = "0.1.0"
-description = "LaDIS: Latent Diffusion for Intrusion Synthesis"
-requires-python = ">=3.10,<3.15"
+description = "Latent diffusion for synthetic tabular network traffic and intrusion data."
+readme = "README.md"
+requires-python = ">=3.10"
+
+license = "Apache-2.0"
+license-files = [
+    "LICENSE",
+    "NOTICE",
+]
+
+authors = [
+    { name = "Estela Sánchez-Carballo" },
+]
+
+maintainers = [
+    { name = "Estela Sánchez-Carballo" },
+]
+
+keywords = [
+    "latent-diffusion",
+    "diffusion-models",
+    "synthetic-data",
+    "tabular-data",
+    "intrusion-detection",
+    "network-traffic",
+    "iot",
+    "cybersecurity",
+    "data-augmentation",
+    "generative-models",
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
 
 dependencies = [
     "numpy",
@@ -32,6 +71,12 @@ pcap = [
 dev = [
     "pytest>=8",
 ]
+
+[project.urls]
+Homepage = "https://github.com/estelasc/LaDIS"
+Repository = "https://github.com/estelasc/LaDIS"
+Issues = "https://github.com/estelasc/LaDIS/issues"
+Paper = "https://arxiv.org/abs/2601.16976"
 
 
 [tool.setuptools.packages.find]
