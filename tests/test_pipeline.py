@@ -20,6 +20,7 @@ from ladis.training import fit_ladis_autoencoder, fit_ladis_clean_z0_diffusion
 from ladis.latent import (encode_ladis_partition, fit_ladis_latent_standardization, freeze_ladis_autoencoder, inverse_ladis_latent_standardization,
     transform_ladis_latent_space)
 from ladis.sampling import decode_ladis_latent_partition, sample_ladis_standardized_latents
+from ladis.pipeline import LaDIS, build_ladis_smoke_test_config
 
 RANDOM_STATE = 42
 
@@ -37,6 +38,33 @@ def _make_model_ready_data(n_rows: int, *, seed: int) -> tuple[pd.DataFrame, pd.
         dtype=np.float32)
     cat_data = pd.DataFrame({"cat_0": rng.integers(0, 3, n_rows), "cat_1": rng.integers(0, 4, n_rows)}, dtype=np.int64)
     return num_data, cat_data
+
+
+def test_autoencoder_handles_singleton_batch_when_auxiliary_losses_are_disabled() -> None:
+    """
+    Verify that a final one-row minibatch does not fail when optional
+    auxiliary reconstruction losses are disabled.
+    """
+
+    device = torch.device("cpu")
+    num_columns = ["num_0", "num_1", "num_2"]
+    cat_columns = ["cat_0", "cat_1"]
+    cat_cards = {"cat_0": 3, "cat_1": 4}
+    # With batch_size=32, both partitions end in a one-row minibatch.
+    train_num, train_cat = _make_model_ready_data(33, seed=RANDOM_STATE)
+    val_num, val_cat = _make_model_ready_data(33, seed=RANDOM_STATE + 1)
+    embedding_dimensions = derive_ladis_embedding_dimensions(cat_columns=cat_columns, cat_cards=cat_cards, min_dim=2, max_dim=4)
+    autoencoder_conf = {"embedding_dimensions": embedding_dimensions, "latent_dimension": 4, "encoder_hidden_dimensions": (16, 8),
+        "decoder_hidden_dimensions": (8, 16), "dropout": 0.0, "learning_rate": 1e-3, "weight_decay": 0.0, "batch_size": 32, "maximum_epochs": 1,
+        "early_stopping_patience": 1, "minimum_improvement": 0.0, "gradient_clip_norm": 1.0, "numerical_loss_weight": 1.0, "categorical_loss_weight": 1.0,
+        "variance_loss_weight": 0.0, "marginal_loss_weight": 0.0, "normalize_categorical_loss": True}
+    model, history, summary = fit_ladis_autoencoder(train_num_data=train_num, train_cat_data=train_cat, val_num_data=val_num, val_cat_data=val_cat,
+        num_columns=num_columns, cat_columns=cat_columns, cat_cards=cat_cards, conf=autoencoder_conf, random_state=RANDOM_STATE, device=device, verbose=False)
+    assert model is not None
+    assert len(history) == 1
+    assert np.isfinite(history.filter(like="loss").to_numpy(dtype=float)).all()
+    assert int(summary["training_rows"]) == 33
+    assert int(summary["validation_rows"]) == 33
 
 
 def test_preparation_and_preprocessing_roundtrip_smoke() -> None:
@@ -133,3 +161,24 @@ def test_core_ladis_pipeline_smoke() -> None:
     assert bool(decoding_summary["numerical_values_are_finite"])
     assert int(decoding_summary["invalid_categorical_codes"]) == 0
     assert bool(decoding_summary["decoding_valid"])
+
+
+def test_high_level_ladis_supports_numerical_only_data() -> None:
+    """
+    Verify that the public LaDIS pipeline supports datasets containing
+    numerical variables and no categorical variables.
+    """
+
+    rng = np.random.default_rng(RANDOM_STATE)
+    data = pd.DataFrame({"feature_0": rng.normal(0.0, 1.0, 256), "feature_1": rng.normal(2.0, 0.5, 256), "feature_2": rng.lognormal(0.0, 0.4, 256)})
+    model = LaDIS(model_config=build_ladis_smoke_test_config(), random_state=RANDOM_STATE, device="cpu", include_provenance=False, verbose=False)
+    model.fit(data)
+    assert model.is_fitted_
+    assert model.num_columns_ == ["feature_0", "feature_1", "feature_2"]
+    assert model.cat_columns_ == []
+    assert model.cat_cards_ == {}
+    synthetic = model.sample(32, random_state=RANDOM_STATE + 1, validate=True)
+    assert synthetic.shape == (32, 3)
+    assert synthetic.columns.tolist() == data.columns.tolist()
+    assert synthetic.isna().sum().sum() == 0
+    assert np.isfinite(synthetic.to_numpy(dtype=float)).all()

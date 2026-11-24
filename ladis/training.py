@@ -83,11 +83,17 @@ def _compute_ladis_autoencoder_loss(*, model: MixedTypeAutoencoder, num_input: t
     (_, num_rec, cat_logits) = model(num_input, cat_input)
     # Pointwise numerical reconstruction
     num_loss = F.mse_loss(num_rec, num_input, reduction="mean")
-    # Numerical variance preservation
-    var_loss = _compute_ladis_variance_preservation_loss(ref_num=num_input, rec_num=num_rec, eps=var_loss_eps)
-    # Numerical marginal-distribution preservation
-    marginal_loss = _compute_ladis_marginal_preservation_loss(ref_num=num_input, rec_num=num_rec)
+    # Compute optional numerical auxiliary losses only when they contribute to the configured objective
+    if var_loss_weight > 0.0:
+        var_loss = _compute_ladis_variance_preservation_loss(ref_num=num_input, rec_num=num_rec, eps=var_loss_eps)
+    else:
+        var_loss = num_rec.new_zeros(())
+    if marginal_loss_weight > 0.0:
+        marginal_loss = _compute_ladis_marginal_preservation_loss(ref_num=num_input, rec_num=num_rec)
+    else:
+        marginal_loss = num_rec.new_zeros(())
     # Categorical reconstruction
+    # Numerical-only datasets have no categorical decoder heads and therefore contribute zero categorical loss
     cat_losses = []
     for column_index, logits in enumerate(cat_logits):
         column_loss = F.cross_entropy(logits, cat_input[:, column_index], reduction="mean")
@@ -95,7 +101,10 @@ def _compute_ladis_autoencoder_loss(*, model: MixedTypeAutoencoder, num_input: t
             cardinality = model.cat_cards[column_index]
             column_loss = column_loss / float(np.log(cardinality))
         cat_losses.append(column_loss)
-    cat_loss = (torch.stack(cat_losses).mean())
+    if cat_losses:
+        cat_loss = torch.stack(cat_losses).mean()
+    else:
+        cat_loss = num_rec.new_zeros(())
     # Complete mixed-type reconstruction objective
     total_loss = num_loss_weight*num_loss + var_loss_weight*var_loss + marginal_loss_weight*marginal_loss + cat_loss_weight*cat_loss
     return (total_loss, num_loss, var_loss, marginal_loss, cat_loss)

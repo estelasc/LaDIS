@@ -481,15 +481,17 @@ def prepare_ladis_partition(*, df_prepared: pd.DataFrame, feature_order: Sequenc
                 f"Examples: {invalid_examples}")
         code_range_records.append({"split": split_name, "column": column, "cardinality": cardinality, "observed_code_min": int(column_codes.min()),
             "observed_code_max": int(column_codes.max()), "observed_categories": int(np.unique(column_codes).size), "invalid_code_n": invalid_count})
-    code_range_diagnostics = pd.DataFrame(code_range_records)
+    code_range_diagnostics = pd.DataFrame(code_range_records, columns=["split", "column", "cardinality", "observed_code_min", "observed_code_max",
+        "observed_categories", "invalid_code_n"])
     if not (len(num_model_data) == len(cat_model_data) == len(eval_data)):
         raise RuntimeError(f"The {split_name} numerical, categorical, and evaluation representations contain different row counts.")
     model_feature_count = num_model_data.shape[1] + cat_model_data.shape[1]
     if model_feature_count != len(feature_order):
         raise RuntimeError("The number of LaDIS numerical and categorical inputs does not equal the definitive model-feature count.")
+    categorical_dtype = (str(cat_model_data.dtypes.iloc[0]) if len(cat_columns) > 0 else None)
     representation_summary = pd.Series({"split": split_name, "rows": len(eval_data), "numerical_variables": num_model_data.shape[1],
         "categorical_variables": cat_model_data.shape[1], "raw_model_variables": model_feature_count, "evaluation_variables": eval_data.shape[1],
-        "numerical_dtype": str(num_model_data.dtypes.iloc[0]), "categorical_dtype": str(cat_model_data.dtypes.iloc[0]),
+        "numerical_dtype": str(num_model_data.dtypes.iloc[0]), "categorical_dtype": categorical_dtype,
         "numerical_missing_n": int(num_model_data.isna().sum().sum()), "numerical_infinite_n": int(np.isinf(num_values).sum()),
         "categorical_missing_n": int(cat_model_data.isna().sum().sum()), "invalid_categorical_code_n": int(code_range_diagnostics["invalid_code_n"].sum()),
         "representation_valid": True}, name="value")

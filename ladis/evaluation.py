@@ -147,8 +147,12 @@ def reconstruct_ladis_autoencoder_partition(*, model: MixedTypeAutoencoder, num_
             cat_batch = cat_batch.to(device=device, dtype=torch.long)
             (_, num_rec, cat_logits) = model(num_batch, cat_batch)
             num_batches.append(num_rec.cpu().numpy())
-            cat_preds = torch.stack([logits.argmax(dim=1) for logits in cat_logits], dim=1)
-            cat_batches.append(cat_preds.cpu().numpy())
+            if cat_logits:
+                cat_preds = torch.stack([logits.argmax(dim=1) for logits in cat_logits], dim=1)
+                cat_batch_values = cat_preds.cpu().numpy()
+            else:
+                cat_batch_values = np.empty((num_batch.shape[0], 0), dtype=np.int64)
+            cat_batches.append(cat_batch_values)
     rec_num_data = pd.DataFrame(np.concatenate(num_batches, axis=0), columns=list(num_columns)).astype(np.float32)
     rec_cat_data = pd.DataFrame(np.concatenate(cat_batches, axis=0), columns=list(cat_columns)).astype(np.int64)
     return (rec_num_data, rec_cat_data)
@@ -190,15 +194,23 @@ def evaluate_ladis_autoencoder_reconstruction(*, model: MixedTypeAutoencoder, nu
         cat_records.append({"split": split_name, "column": column, "cardinality": int(cat_cards[column]), 
             "accuracy": float(np.mean(pred_codes == ref_codes)), "reference_observed_categories": int(np.unique(ref_codes).size),
             "predicted_observed_categories": int(np.unique(pred_codes).size)})
-    cat_diagnostics = pd.DataFrame(cat_records)
+    cat_diagnostics = pd.DataFrame(cat_records, columns=["split", "column", "cardinality", "accuracy", "reference_observed_categories",
+            "predicted_observed_categories"])
+    if cat_columns:
+        categorical_macro_accuracy = float(cat_diagnostics["accuracy"].mean())
+        categorical_minimum_accuracy = float(cat_diagnostics["accuracy"].min())
+        categorical_exact_row_accuracy = float(np.mean(np.all(rec_cat == ref_cat, axis=1)))
+    else:
+        categorical_macro_accuracy = np.nan
+        categorical_minimum_accuracy = np.nan
+        categorical_exact_row_accuracy = np.nan
     finite_corrs = num_diagnostics["correlation"].replace([np.inf, -np.inf], np.nan).dropna()
     global_mse = float(np.mean(np.square(errors)))
     summary = pd.Series({"split": split_name, "rows": len(num_data), "numerical_global_mse": global_mse, 
         "numerical_global_rmse": float(np.sqrt(global_mse)), "numerical_global_mae": float(np.mean(np.abs(errors))),
         "numerical_median_column_rmse": float(num_diagnostics["rmse"].median()), "numerical_maximum_column_rmse": float(num_diagnostics["rmse"].max()),
-        "numerical_median_correlation": float(finite_corrs.median()), "categorical_macro_accuracy": float(cat_diagnostics["accuracy"].mean()),
-        "categorical_minimum_accuracy": float(cat_diagnostics["accuracy"].min()), 
-        "categorical_exact_row_accuracy": float(np.mean(np.all(rec_cat == ref_cat, axis=1))),
+        "numerical_median_correlation": float(finite_corrs.median()), "categorical_macro_accuracy": categorical_macro_accuracy,
+        "categorical_minimum_accuracy": categorical_minimum_accuracy, "categorical_exact_row_accuracy": categorical_exact_row_accuracy,
         "reconstructed_numerical_values_are_finite": bool(np.isfinite(rec_num).all()), "reconstruction_valid": True}, name="value")
     return (summary, num_diagnostics, cat_diagnostics)
 

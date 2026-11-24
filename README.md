@@ -1552,6 +1552,25 @@ It records semantic decisions that cannot always be inferred safely from column 
 
 The package includes utilities for recording the principal Python, NumPy, pandas, PyTorch, CUDA, joblib, scikit-learn, and SDMetrics versions used by an experiment.
 
+### Validated scientific environment
+
+The complete LaDIS pipeline used for the reference experiments has been validated in the following environment:
+
+| Component | Validated version |
+|---|---|
+| Operating system | Linux x86_64, glibc 2.28 |
+| GPU | NVIDIA A40 |
+| Python | 3.14.4 |
+| NumPy | 2.4.4 |
+| pandas | 2.3.3 |
+| PyTorch | 2.11.0+cu126 |
+| CUDA | 12.6 |
+| scikit-learn | 1.8.0 |
+| SDMetrics | 0.33.0 |
+| joblib | 1.5.3 |
+
+These versions describe the environment used to validate the complete scientific LaDIS workflow. Other operating systems, hardware configurations, and compatible dependency versions may also work, but have not yet been systematically validated.
+
 ---
 
 ## Testing

@@ -86,6 +86,7 @@ def decode_ladis_latent_partition(*, model: MixedTypeAutoencoder, raw_latent_dat
     with torch.no_grad():
         for start_index in range(0, len(latent_vals), batch_size):
             end_index = min(start_index + batch_size, len(latent_vals))
+            current_batch_size = end_index - start_index
             latent_batch = torch.from_numpy(latent_vals[start_index:end_index]).to(device=device, dtype=torch.float32)
             (num_rec, cat_logits) = model.decode(latent_batch)
             if not torch.isfinite(num_rec).all().item():
@@ -101,9 +102,12 @@ def decode_ladis_latent_partition(*, model: MixedTypeAutoencoder, raw_latent_dat
                     probabilities = torch.softmax(logits, dim=1)
                     predictions = torch.multinomial(probabilities, num_samples=1, replacement=True, generator=generator).squeeze(1)
                 cat_preds.append(predictions)
-            cat_tensor = torch.stack(cat_preds, dim=1)
+            if cat_preds:
+                cat_batch_values = torch.stack(cat_preds, dim=1).cpu().numpy()
+            else:
+                cat_batch_values = np.empty((current_batch_size, 0), dtype=np.int64)
             num_batches.append(num_rec.cpu().numpy())
-            cat_batches.append(cat_tensor.cpu().numpy())
+            cat_batches.append(cat_batch_values)
     num_data = pd.DataFrame(np.concatenate(num_batches, axis=0), columns=num_columns).astype(np.float32)
     cat_data = pd.DataFrame(np.concatenate(cat_batches, axis=0), columns=cat_columns).astype(np.int64)
     invalid_codes = 0
