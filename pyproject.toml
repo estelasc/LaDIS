@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ladis"
-version = "0.1.0"
+version = "0.1.1"
 description = "Latent diffusion for synthetic tabular network traffic and intrusion data."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -65,7 +65,7 @@ dependencies = [
 [project.optional-dependencies]
 pcap = [
     "scapy>=2.8,<2.9",
-    "tqdm>=4.70,<5",
+    "tqdm>=4.66,<5",
 ]
 
 dev = [
