@@ -153,8 +153,7 @@ Numerical variables are first divided into continuous and discrete-count variabl
 Strongly right-skewed, non-negative numerical variables can receive:
 
 ```text
-log1p
-→ standardization
+log1p → standardization
 ```
 
 Other numerical variables are standardized directly.
